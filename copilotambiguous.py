@@ -277,7 +277,7 @@ def example():
         beta=1.0,             # keep as-is unless you want more deterministic choices
         u0=0.0,               # no-purchase utility; with positive utilities, most will purchase
         num_customers=30,     # exactly 30 customers
-        mc_runs=200,          # Monte Carlo runs
+        mc_runs=1,          # Monte Carlo runs
         seed=2026,
         unit_budget=None,           # no global unit cap (per-product cap is already 3)
         procurement_budget=None,    # no procurement budget
