@@ -120,6 +120,8 @@ def profit_for_x(instance: RetailInstance, x: np.ndarray) -> float:
     Average profit across scenarios for a given x.
     """
     x = x.astype(int)
+    x_test = np.array([3, 3, 3, 3, 3, 3, 3, 3, 3, 3])
+
     total = 0.0
     for U in instance.utilities:
         sales, leftover = simulate_sales_single_scenario(
@@ -266,7 +268,7 @@ def solve_inventory(instance: RetailInstance, verbose: bool = False) -> Tuple[np
 # Example usage
 # -------------------------------
 if __name__ == "__main__":
-    # Example with 10 products and 30 customers (single scenario).
+    # Example with 10 products and 30 customers.
     prices = np.array([9, 9, 9, 9, 9, 9, 9, 9, 9, 9])
     costs  = np.array([5, 5, 5, 5, 5, 5, 5, 5, 5, 5])
     salvage = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
@@ -318,11 +320,7 @@ if __name__ == "__main__":
         tiebreak="price"
     )
 
-    #best_x, best_profit = solve_inventory(instance, verbose=True)
+    best_x, best_profit = solve_inventory(instance, verbose=True)
     #print("Optimal initial inventory:", best_x)
-    #print("Expected profit:", round(best_profit, 4))
-
-    x_test = np.array([3, 3, 3, 3, 3, 3, 3, 3, 3, 3])
-    profit = profit_for_x(instance, x_test)
-    print("Profit for x=[3,...,3]:", round(profit, 4))
+    print("Expected profit:", round(best_profit, 4))
 
