@@ -112,7 +112,6 @@ def simulate_sales_single_scenario(
         sales[chosen] += 1
 
     leftover = inv
-    print("Sales:", sales)
     return sales, leftover
 
 
@@ -133,6 +132,7 @@ def profit_for_x(instance: RetailInstance, x: np.ndarray) -> float:
         cost = float(np.dot(instance.costs, x))
         salvage = float(np.dot(instance.salvage, leftover))
         total += (revenue - cost + salvage)
+
     return total / len(instance.utilities)
 
 
@@ -266,14 +266,34 @@ def solve_inventory(instance: RetailInstance, verbose: bool = False) -> Tuple[np
 # Example usage
 # -------------------------------
 if __name__ == "__main__":
-    # Example with 3 products and 10 customers (single scenario).
+    # Example with 10 products and 30 customers (single scenario).
     prices = np.array([9, 9, 9, 9, 9, 9, 9, 9, 9, 9])
     costs  = np.array([5, 5, 5, 5, 5, 5, 5, 5, 5, 5])
     salvage = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 
-    # Utilities (M=10 customers, n= products)
+    # Utilities (M=30 customers, n= products)
     # Positive utility means they'll buy that item if it's their best in-stock option.
     U = np.array([
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],   
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],   
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],   
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],   
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
         [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],   
         [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
         [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -298,9 +318,9 @@ if __name__ == "__main__":
         tiebreak="price"
     )
 
-    best_x, best_profit = solve_inventory(instance, verbose=True)
-    print("Optimal initial inventory:", best_x)
-    print("Expected profit:", round(best_profit, 4))
+    #best_x, best_profit = solve_inventory(instance, verbose=True)
+    #print("Optimal initial inventory:", best_x)
+    #print("Expected profit:", round(best_profit, 4))
 
     x_test = np.array([3, 3, 3, 3, 3, 3, 3, 3, 3, 3])
     profit = profit_for_x(instance, x_test)
