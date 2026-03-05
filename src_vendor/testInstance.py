@@ -13,11 +13,11 @@ def main():
     # Define test instance (benchmark)
     fixed_factors = {
         "num_prod": 10,
-        "num_customer": 30,
+        "num_customer": 10,
         "c_utility": [6 + j for j in range(10)],
         "mu": 1.0,
         "init_level": [3] * 10,
-        "price": [9] * 10,
+        "price": [6 + j for j in range(10)],
         "cost": [5] * 10,
     }
 
@@ -39,7 +39,11 @@ def main():
         results.append({
             "iteration": r + 1,
             **{f"x{j+1}": q for j, q in enumerate(fixed_factors["init_level"])},
-            "profit": responses["profit"]
+            "profit": responses["profit"],
+            "revenue": responses["revenue"],
+            "costs": responses["costs"],
+            "total_sold": responses["total_sold"]
+            
         })
 
     # Save to CSV
