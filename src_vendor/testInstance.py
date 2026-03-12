@@ -16,7 +16,7 @@ def main():
         "num_customer": 10,
         "c_utility": [6 + j for j in range(10)],
         "mu": 1.0,
-        "init_level": [3] * 10,
+        #"init_level": [3] * 10,
         "price": [6 + j for j in range(10)],
         "cost": [5] * 10,
     }

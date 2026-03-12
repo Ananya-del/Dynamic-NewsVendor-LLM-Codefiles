@@ -5,6 +5,12 @@ from typing import List, Optional, Callable, Tuple, Union
 import numpy as np
 
 # ----------------------
+# Constants
+# ----------------------
+GAMMA_EULER = 0.5772156649015328606  # Euler–Mascheroni constant
+
+
+# ----------------------
 # Data Structures
 # ----------------------
 
@@ -19,20 +25,28 @@ class Product:
 
 @dataclass
 class Config:
-    beta: float = 1.0           # choice sensitivity (higher => more deterministic by preference)
-    u0: float = 0.0             # utility for no-purchase option
-    num_customers: int = 500    # number of customer arrivals
-    mc_runs: int = 200          # Monte Carlo replications for expected values
-    seed: int = 42              # RNG seed for reproducibility
-    # Optional constraints on initial inventory decision:
-    unit_budget: Optional[int] = None         # total number of units allowed, sum(s_i) <= unit_budget
-    procurement_budget: Optional[float] = None # total procurement spend allowed, sum(c_i * s_i) <= procurement_budget
-    # Performance controls:
-    common_randomness: bool = True            # use the same random streams when comparing candidate solutions
+    # Deterministic utility structure
+    beta: float = 1.0       # scales product preferences -> u^j for products
+    u0: float = 0.0         # deterministic utility for no-purchase option (j=0)
+
+    # Customer horizon and MC
+    num_customers: int = 500
+    mc_runs: int = 200
+    seed: int = 42
+
+    # MNL (Gumbel) scale: epsilon^j_t ~ Gumbel(loc = -mu*gamma, scale = mu)  -> E[epsilon]=0
+    mnl_scale_mu: float = 1.0
+
+    # Constraints
+    unit_budget: Optional[int] = None
+    procurement_budget: Optional[float] = None
+
+    # Variance reduction
+    common_randomness: bool = True
 
 
 # ----------------------
-# Preference Generation
+# Preference Generation (deterministic component u^j for products)
 # ----------------------
 
 def default_preference_generator(
@@ -43,9 +57,8 @@ def default_preference_generator(
     sigma: float = 1.0,
 ) -> np.ndarray:
     """
-    Generate a (num_customers x n_products) matrix of preferences.
-    By default, each customer's preference for product i is Normal(mu_i, sigma^2).
-    - mu can be a scalar (same mean for all products) or a 1D array of length n_products.
+    Generate a (num_customers x n_products) matrix of base preferences.
+    These are converted to deterministic product utilities via beta * pref.
     """
     if np.isscalar(mu):
         mu_vec = np.full(n_products, float(mu))
@@ -58,65 +71,63 @@ def default_preference_generator(
 
 
 # ----------------------
-# Choice + Simulation
+# Choice (Random Utility with i.i.d. Gumbel noise) + Simulation
 # ----------------------
 
 def mnl_choice(
-    utilities: np.ndarray,         # length-n vector for in-stock products' utilities (beta * pref)
+    utilities: np.ndarray,         # length-n vector of deterministic utilities for products (u^j for j>=1)
     in_stock_mask: np.ndarray,     # boolean mask length-n
-    u0: float,                     # no-purchase utility
-    rng: np.random.Generator
+    u0: float,                     # deterministic utility for no-purchase (u^0)
+    rng: np.random.Generator,
+    mu: float = 1.0                # Gumbel scale parameter (epsilon mean = 0 with loc = -mu*gamma)
 ) -> int:
     """
-    Returns chosen index in [0, n_products-1], or -1 for no-purchase.
-    Only in-stock items are eligible.
+    Draws i.i.d. Gumbel shocks for every eligible option (products in stock + no-purchase),
+    forms U^j = u^j + epsilon^j, and returns the argmax:
+      - index in [0, n_products-1] for a purchased product,
+      - -1 for no-purchase.
+
+    The specified CDF for epsilon is: P(epsilon <= z) = exp(-exp(-(z/mu + gamma))).
+    This equals Gumbel(loc=-mu*gamma, scale=mu).
     """
-    eligible = np.where(in_stock_mask)[0]
-    if eligible.size == 0:
-        # Only no-purchase available
+    eligible_idx = np.where(in_stock_mask)[0]
+
+    # If nothing is in stock, only no-purchase is feasible.
+    if eligible_idx.size == 0:
+        # Still draw epsilon for no-purchase for completeness (not required)
         return -1
 
-    # Compute MNL probabilities among eligible + no-purchase
-    util = utilities.copy()
-    # For out-of-stock, set to -inf (not chosen)
-    util[~in_stock_mask] = -np.inf
+    # Build deterministic utilities for eligible products
+    u_prod = utilities[eligible_idx]  # shape (k,)
 
-    # Compute exp utilities safely
-    exp_utils = np.zeros_like(util)
-    mask_finite = np.isfinite(util)
-    exp_utils[mask_finite] = np.exp(util[mask_finite])
+    # Draw i.i.d. Gumbel shocks with mean 0 by setting loc = -mu*gamma
+    # NumPy uses: CDF(x) = exp(-exp(-(x - loc)/scale))
+    eps_prod = rng.gumbel(loc=-mu * GAMMA_EULER, scale=mu, size=u_prod.shape[0])
+    eps_no  = rng.gumbel(loc=-mu * GAMMA_EULER, scale=mu)
 
-    # Include no-purchase as an option
-    exp_u0 = np.exp(u0)
+    U_prod = u_prod + eps_prod
+    U_no   = u0 + eps_no
 
-    denom = exp_u0 + exp_utils.sum()
-    # Probabilities for products:
-    probs_prod = exp_utils / denom
-    # No-purchase probability:
-    prob_no = exp_u0 / denom
-
-    # Sample choice
-    # Construct categorical over [products..., no-purchase]
-    probs = np.append(probs_prod, prob_no)
-    choice = rng.choice(len(probs), p=probs)
-    if choice == len(probs) - 1:
-        return -1  # no-purchase
-    # map back to product index
-    return choice
+    # Compare against no-purchase
+    best_prod_idx = int(np.argmax(U_prod))
+    if U_no >= U_prod[best_prod_idx]:
+        return -1
+    else:
+        return int(eligible_idx[best_prod_idx])
 
 
 def simulate_one_run(
     products: List[Product],
     initial_stock: np.ndarray,           # integer vector length-n
-    preferences: np.ndarray,             # (T x n) matrix
+    preferences: np.ndarray,             # (T x n) matrix of deterministic preference inputs
     config: Config,
     rng: np.random.Generator
 ) -> Tuple[np.ndarray, float]:
     """
-    Run a single trajectory. Returns:
-      - sold_counts: vector length-n of units sold
-      - profit: realized profit for the trajectory
-    Profit = sum_i sold_i * price_i - sum_i initial_stock_i * cost_i + sum_i leftover_i * salvage_i
+    One trajectory. At customer t, deterministic utilities are:
+        u^j_t = beta * preferences[t, j] for products j>=1,
+        u^0   = config.u0 for no-purchase,
+    and random utilities add i.i.d. Gumbel shocks with scale mu = config.mnl_scale_mu.
     """
     n = len(products)
     T = preferences.shape[0]
@@ -127,19 +138,22 @@ def simulate_one_run(
     procurement_spend = sum(prod.cost * int(initial_stock[i]) for i, prod in enumerate(products))
 
     for t in range(T):
-        pref_t = preferences[t]  # shape (n,)
-        # Utilities = beta * preference
-        utilities = config.beta * pref_t
+        pref_t = preferences[t]         # shape (n,)
+        u_det_products = config.beta * pref_t
         in_stock_mask = stock > 0
 
-        choice = mnl_choice(utilities, in_stock_mask, config.u0, rng)
+        choice = mnl_choice(
+            utilities=u_det_products,
+            in_stock_mask=in_stock_mask,
+            u0=config.u0,
+            rng=rng,
+            mu=config.mnl_scale_mu
+        )
+
         if choice >= 0:
-            # Fulfill sale
             stock[choice] -= 1
             sold[choice] += 1
-            # If stock reaches 0, item disappears for next customers
 
-    # Leftovers salvage
     leftovers = stock
     revenue = sum(products[i].price * sold[i] for i in range(n))
     salvage = sum(products[i].salvage * leftovers[i] for i in range(n))
@@ -156,8 +170,7 @@ def expected_profit(
     rng_master: Optional[np.random.Generator] = None
 ) -> float:
     """
-    Monte Carlo estimate of expected profit for a given stock vector.
-    If config.common_randomness is True, uses fixed seeds across calls for variance reduction.
+    Monte Carlo estimate of expected profit with common random numbers (optional).
     """
     n = len(products)
     T = config.num_customers
@@ -166,7 +179,6 @@ def expected_profit(
     if rng_master is None:
         rng_master = np.random.default_rng(config.seed)
 
-    # Common random numbers: pre-generate seeds for each run.
     seeds = rng_master.integers(1, 2**31 - 1, size=runs) if config.common_randomness else None
 
     profits = []
@@ -189,17 +201,13 @@ def feasible_to_add(
     k: int,
     config: Config
 ) -> bool:
-    """
-    Check if adding one unit of product k keeps constraints satisfied.
-    """
     # Per-product cap
     if products[k].max_stock is not None and stock[k] + 1 > products[k].max_stock:
         return False
 
     # Unit budget
-    if config.unit_budget is not None:
-        if stock.sum() + 1 > config.unit_budget:
-            return False
+    if config.unit_budget is not None and stock.sum() + 1 > config.unit_budget:
+        return False
 
     # Procurement budget
     if config.procurement_budget is not None:
@@ -215,19 +223,10 @@ def greedy_optimize_inventory(
     pref_sampler: Callable[[np.random.Generator, int, int], np.ndarray],
     config: Config
 ) -> Tuple[np.ndarray, float]:
-    """
-    Start from zero stock. Iteratively add one unit of the product with the largest
-    positive marginal expected profit, respecting constraints. Stops when no positive
-    marginal gains remain or constraints are binding.
-    Returns (best_stock_vector, expected_profit).
-    """
     n = len(products)
     stock = np.zeros(n, dtype=int)
 
-    # Prepare a master RNG for common random numbers
     rng_master = np.random.default_rng(config.seed)
-
-    # Compute baseline expected profit
     base_profit = expected_profit(products, stock, pref_sampler, config, rng_master)
 
     improved = True
@@ -236,7 +235,6 @@ def greedy_optimize_inventory(
         best_gain = 0.0
         best_k = -1
 
-        # Evaluate marginal gain for each product
         for k in range(n):
             if not feasible_to_add(products, stock, k, config):
                 continue
@@ -251,7 +249,6 @@ def greedy_optimize_inventory(
                 best_k = k
 
         if best_k >= 0 and best_gain > 0:
-            # Accept the best move
             stock[best_k] += 1
             base_profit += best_gain
             improved = True
@@ -266,43 +263,34 @@ def greedy_optimize_inventory(
 # ----------------------
 
 def example():
-    # 10 products, each price=9, cost=5, salvage=0, max_stock=3
+    # Simple demo setup (you can replace this with your specific data)
     products = [
-        Product("A", price=11, cost=5.0, salvage=0.0, max_stock=3),
-        Product("B", price=12, cost=5.0, salvage=0.0, max_stock=3),
-        Product("C", price=13, cost=5.0, salvage=0.0, max_stock=3),
-        Product("D", price=14, cost=5.0, salvage=0.0, max_stock=3),
-        Product("E", price=15, cost=5.0, salvage=0.0, max_stock=3),
-        Product("F", price=16, cost=5.0, salvage=0.0, max_stock=3),
-        Product("G", price=17, cost=5.0, salvage=0.0, max_stock=3),
-        Product("H", price=18, cost=5.0, salvage=0.0, max_stock=3),
-        Product("I", price=19, cost=5.0, salvage=0.0, max_stock=3),
-        Product("J", price=20, cost=5.0, salvage=0.0, max_stock=3),
+        Product("A", price=12.0, cost=6.0, salvage=1.0, max_stock=200),
+        Product("B", price=10.0, cost=4.5, salvage=0.5, max_stock=200),
+        Product("C", price=9.0,  cost=4.0, salvage=0.5, max_stock=200),
+        Product("D", price=14.0, cost=7.0, salvage=1.5, max_stock=200),
+        Product("E", price=8.0,  cost=3.5, salvage=0.5, max_stock=200),
     ]
 
-    # Configuration for 10 customers
     config = Config(
-        beta=1.0,             # keep as-is unless you want more deterministic choices
-        u0=0,               # no-purchase utility; with positive utilities, most will purchase
-        num_customers=15,     # exactly 15 customers
-        mc_runs=1,          # Monte Carlo runs
+        beta=1.0,            # scales deterministic product utilities
+        u0=1.0,               # deterministic utility for no-purchase option
+        num_customers=15,
+        mc_runs=100,
         seed=2026,
-        unit_budget=None,           # no global unit cap (per-product cap is already 3)
-        procurement_budget=None,    # no procurement budget
+        mnl_scale_mu=5.0,     # Gumbel scale (μ). Lower => less randomness; higher => more randomness
+        unit_budget=1000,
+        procurement_budget=None,
         common_randomness=True
     )
 
-    # For every customer, utilities for products are [6,7,8,9,10,11,12,13,14,15]
-    base_util = np.arange(6, 16, dtype=float)  # length 10
+    # Preference generator with heterogeneous means
+    mu_vec = np.array([1.0, 0.8, 0.6, 1.2, 0.5])
+    sigma = 1.0
 
     def pref_sampler(rng: np.random.Generator, n: int, T: int) -> np.ndarray:
-        # Deterministic preferences: T x n where each row is base_util
-        # (We still follow the required signature.)
-        if n != 10:
-            raise ValueError("This setup expects exactly 10 products.")
-        return np.tile(base_util, (T, 1))
+        return default_preference_generator(rng, n_products=n, num_customers=T, mu=mu_vec, sigma=sigma)
 
-    # Run optimizer
     best_stock, best_exp_profit = greedy_optimize_inventory(products, pref_sampler, config)
 
     print("\nRecommended initial inventory (units):")
